@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Runner — GreenNode.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --gn-green:#0DB14B;--gn-green-bright:#3DF07A;--gn-green-dim:#0A7A36;
+    --bg:#04070A;--surface:#0A1210;--ink:#E8F2EA;--ink-dim:#7C8E82;
+    --px-font:'Press Start 2P',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;}
+  .game-section{width:100%;max-width:980px;padding:72px 24px 88px;text-align:center;}
+  .eyebrow{font-family:var(--px-font);font-size:10px;color:var(--gn-green);letter-spacing:2px;display:inline-flex;align-items:center;gap:10px;margin-bottom:20px;}
+  .eyebrow::before,.eyebrow::after{content:"";width:24px;height:2px;background:var(--gn-green);box-shadow:0 0 8px rgba(13,177,75,.8);}
+  h2{font-family:var(--px-font);font-size:clamp(18px,4vw,30px);line-height:1.5;letter-spacing:1px;margin-bottom:16px;color:var(--ink);text-shadow:3px 3px 0 rgba(13,177,75,.35);}
+  h2 .hl{color:var(--gn-green)}
+  .sub{max-width:520px;margin:0 auto 36px;font-size:15px;line-height:1.6;color:var(--ink-dim);}
+  .sub kbd{font-family:var(--px-font);font-size:9px;background:#10201684;border:1px solid var(--gn-green-dim);border-bottom-width:3px;border-radius:4px;padding:3px 7px;color:var(--gn-green-bright);}
+  .frame{position:relative;display:inline-block;width:100%;max-width:820px;padding:8px;background:var(--surface);border:3px solid var(--gn-green);box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--gn-green-dim),0 0 40px rgba(13,177,75,.18),inset 0 0 24px rgba(0,0,0,.6);image-rendering:pixelated;}
+  .frame::before,.frame::after{content:"";position:absolute;width:10px;height:10px;background:var(--gn-green);}
+  .frame::before{top:-3px;left:-3px}.frame::after{bottom:-3px;right:-3px}
+  canvas{display:block;width:100%;height:auto;image-rendering:pixelated;image-rendering:crisp-edges;background:#04090C;cursor:pointer;}
+  .hud-bar{display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-family:var(--px-font);font-size:9px;color:var(--ink-dim);}
+  .hud-bar button{font-family:var(--px-font);font-size:9px;background:none;border:2px solid var(--gn-green-dim);color:var(--gn-green);padding:7px 12px;cursor:pointer;transition:background .15s;}
+  .hud-bar button:hover{background:rgba(13,177,75,.12)}
+</style>
+</head>
+<body>
+<section class="game-section" aria-label="Node Runner mini game">
+  <div class="eyebrow">BONUS LEVEL</div>
+  <h2>HELP <span class="hl">NODE</span> OUTRUN<br>THE WORKLOAD</h2>
+  <p class="sub">Collect GreenNode power-ups to survive! Press <kbd>SPACE</kbd> or tap to jump. How far can you scale?</p>
+  <div class="frame">
+    <canvas id="game" width="420" height="210" aria-label="Node Runner game canvas"></canvas>
+  </div>
+  <div class="hud-bar" style="max-width:820px;margin-left:auto;margin-right:auto;">
+    <span>NODE RUNNER v2.0 — GREENNODE.AI</span>
+    <button id="muteBtn">SOUND: ON</button>
+  </div>
+</section>
+<script>
+(() => {
+"use strict";
+/* ============ CONFIG ============ */
+const W=420,H=210,GROUND_Y=172,GRAVITY=0.42,JUMP_V=-8.2,JUMP_CUT=0.45;
+const START_SPEED=2.34,MAX_SPEED=5.58,ACCEL=0.00045;
+const NODE_SCALE=1.3,OBS_SCALE=1.15;
+
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+
+/* ============ PALETTE ============ */
+const C={
+  sky:'#04090C',grid:'#0C1F15',
+  grassTop:'#0DB14B',grassDark:'#0A7A36',dirt:'#0A1410',dirtSpeck:'#13251B',
+  white:'#F2EDE2',outline:'#0B0E0A',screen:'#0A120D',
+  eye:'#3DF07A',eyeDim:'#0DB14B',hood:'#171B20',hoodHi:'#242A31',shoe:'#FAFAF7',
+  leaf:'#0DB14B',leafHi:'#3DF07A',warn:'#F5C84B',
+  text:'#E8F2EA',textDim:'#5E7066',brand:'#0DB14B',
+  /* power-up accent colors */
+  gpu:'#F5C84B',    /* H100  — gold  */
+  vks:'#3DF07A',    /* VKS   — bright green */
+  agent:'#A78BFA',  /* Agent — purple */
+};
+
+const PAL={
+  '.':null,'O':C.outline,'W':C.white,'S':C.screen,
+  'G':C.eye,'g':C.eyeDim,'H':C.hood,'h':C.hoodHi,
+  'F':C.shoe,'L':C.leaf,'l':C.leafHi,'Y':C.warn
+};
+const OB_PAL={
+  '.':null,'R':'#3A1014','r':'#E5484D','D':'#FF6B6B','d':'#7E2328','g':'#FF8A8A','Y':C.warn
+};
+
+/* ============ SPRITES ============ */
+const NODE_BODY=[
+"......lL........",".....lLLL.......","....LLLLL.......",
+"..OOOOOOOOOOOO..",".OWWWWWWWWWWWWO.",".OWSSSSSSSSSSWO.",
+".OWSGGSSSSGGSWO.",".OWSGGSSSSGGSWO.",".OWSSSSSSSSSSWO.",
+".OWSSGSGSGSSSWO.",".OWSSSSSSSSSSWO.",".OWWWWWWWWWWWWO.",
+"..OOOOOOOOOOOO...","...OHHHHHHHHO...","..OHHHgggHHHHO..","..OHhHHHHHHhHO..","...OHHHHHHHHO..."
+];
+const NODE_DEAD=[
+"......lL........",".....lLLL.......","....LLLLL.......",
+"..OOOOOOOOOOOO..",".OWWWWWWWWWWWWO.",".OWSSSSSSSSSSWO.",
+".OWSGSGSSGSGSWO.",".OWSSGSSSSGSSWO.",".OWSGSGSSGSGSWO.",
+".OWSSSSSSSSSSWO.",".OWSGGGGGGGGSWO.",".OWWWWWWWWWWWWO.",
+"..OOOOOOOOOOOO...","...OHHHHHHHHO...","..OHHHgggHHHHO..","..OHhHHHHHHhHO..","...OHHHHHHHHO..."
+];
+const LEGS_A=["...FFF....FFF...","..FFFF....FFF..."];
+const LEGS_B=["....FFF..FFF....","....FFF...FFFF.."];
+const LEGS_J=["....FFF..FFF....","....FF....FF...."];
+const LEGS_D=["...FFF....FFF...","...FFF....FFF..."];
+
+const RACK_S=["rrrrrrrrrr","rRRRRRRRRr","rRDdRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRRRRRRRRr","rRdDRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRRRRRRRRr","rRDdRRRRRr","rRRRRRRRRr","rrrrrrrrrr"];
+const RACK_T=["rrrrrrrrrr","rRYYRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRDdRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRdDRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRDdRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRdDRRRRRr","rRRRRRRRRr","rrrrrrrrrr","rRDdRRRRRr","rRRRRRRRRr","rrrrrrrrrr"];
+const GPU_BOX=["rrrrrrrrrrrrrr","rRRRRRRRRRRRRr","rRDDRRRRRRddRr","rRRRRRRRRRRRRr","rRRgggggggRRRr","rRRRRRRRRRRRRr","rRdRdRdRdRdRRr","rrrrrrrrrrrrrr"];
+
+/* ============ SPRITE RENDERER ============ */
+let t=0;
+function drawSprite(map,x,y,opts){
+  opts=opts||{};const s=opts.scale||1,pal=opts.pal||PAL;
+  for(let r=0;r<map.length;r++){
+    const row=map[r],py=y+Math.round(r*s),ph=Math.max(1,Math.round((r+1)*s)-Math.round(r*s));
+    for(let c=0;c<row.length;c++){
+      let ch=row[c];if(ch==='.')continue;
+      if(opts.blink&&(ch==='D'||ch==='d')){ch=(Math.floor(t/18)+r)%2===0?'D':'d';}
+      const col=pal[ch];if(!col)continue;
+      ctx.fillStyle=col;
+      ctx.fillRect(x+Math.round(c*s),py,Math.max(1,Math.round((c+1)*s)-Math.round(c*s)),ph);
+    }
+  }
+}
+
+/* ============ AUDIO ============ */
+let audioCtx=null,muted=false;
+function beep(f,d,tp,v){
+  if(muted)return;tp=tp||'square';v=v||0.04;
+  try{
+    audioCtx=audioCtx||new(window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type=tp;o.frequency.value=f;
+    g.gain.setValueAtTime(v,audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+d);
+    o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+d);
+  }catch(e){}
+}
+const sfx={
+  jump:()=>beep(620,0.12),
+  score:()=>{beep(880,0.07);setTimeout(()=>beep(1175,0.1),80);},
+  die:()=>{beep(220,0.18);setTimeout(()=>beep(140,0.3,'sawtooth'),120);},
+  powerup:()=>{beep(523,0.08);setTimeout(()=>beep(659,0.08),90);setTimeout(()=>beep(784,0.15),180);},
+  revive:()=>{beep(330,0.06);setTimeout(()=>beep(523,0.06),80);setTimeout(()=>beep(784,0.2),160);},
+  milestone:()=>{beep(659,0.06);setTimeout(()=>beep(784,0.06),80);setTimeout(()=>beep(1047,0.18),160);}
+};
+document.getElementById('muteBtn').addEventListener('click',e=>{
+  muted=!muted;e.target.textContent=muted?'SOUND: OFF':'SOUND: ON';
+});
+
+/* ============ POWER-UP DEFINITIONS ============ */
+const POWERUP_DEFS = [
+  {
+    id:'gpu',label:'GPU H100',color:C.gpu,duration:180,
+    desc:'SCORE x1.8 ACTIVE',product:'H100 GPU INSTANCE',
+    icon:(x,y,r)=>{
+      // GPU chip pixel icon
+      ctx.fillStyle=C.gpu;
+      ctx.fillRect(x-r,y-r,r*2,r*2);
+      ctx.fillStyle='#000';
+      ctx.fillRect(x-r+2,y-r+2,r*2-4,r*2-4);
+      ctx.fillStyle=C.gpu;
+      ctx.fillRect(x-2,y-2,4,4);
+      // pins
+      for(let i=-1;i<=1;i+=2){
+        ctx.fillRect(x+i*r,y-r+3,2,r*2-6);
+        ctx.fillRect(x-r+3,y+i*r,r*2-6,2);
+      }
+    }
+  },
+  {
+    id:'vks',label:'VKS K8s',color:C.vks,duration:0,/* shield = instant use */
+    desc:'SHIELD READY',product:'VKS KUBERNETES',
+    icon:(x,y,r)=>{
+      // Kubernetes wheel pixel icon
+      ctx.fillStyle=C.vks;
+      for(let a=0;a<6;a++){
+        const ang=a*Math.PI/3,cos=Math.cos(ang),sin=Math.sin(ang);
+        ctx.fillRect(x+Math.round(cos*r)-1,y+Math.round(sin*r)-1,3,3);
+        ctx.fillRect(x+Math.round(cos*(r/2))-1,y+Math.round(sin*(r/2))-1,2,2);
+      }
+      ctx.fillRect(x-2,y-2,4,4);
+    }
+  },
+  {
+    id:'agent',label:'AgentBase',color:C.agent,duration:240,
+    desc:'AI AUTO-JUMP 4s',product:'AI AGENTBASE',
+    icon:(x,y,r)=>{
+      // Robot face pixel icon
+      ctx.fillStyle=C.agent;
+      ctx.fillRect(x-r,y-r,r*2,r*2);
+      ctx.fillStyle='#000';
+      ctx.fillRect(x-r+1,y-r+1,r*2-2,r*2-2);
+      ctx.fillStyle=C.agent;
+      // eyes
+      ctx.fillRect(x-r+2,y-1,3,3);
+      ctx.fillRect(x+r-4,y-1,3,3);
+      // mouth
+      ctx.fillRect(x-r+3,y+3,r*2-5,2);
+    }
+  },
+];
+
+/* ============ WORLD STATE ============ */
+let state='ready';
+let speed=START_SPEED,score=0,hiScore=0,deadAt=0;
+const node={x:42,y:0,vy:0,w:Math.round(16*NODE_SCALE),h:Math.round(19*NODE_SCALE),onGround:true};
+node.y=GROUND_Y-node.h;
+
+let obstacles=[];
+let powerups=[];         /* active collectibles on ground */
+let nextSpawn=0;
+let nextPowerupSpawn=180;
+
+/* ---- Active power-up state ---- */
+const active={
+  gpu:0,          /* frames remaining */
+  vks:false,      /* green shield — absorbs 1 obstacle */
+  agent:0,        /* frames remaining */
+  agentShield:false, /* purple shield granted after AgentBase expires */
+};
+let vksReviveAnim=0;
+let agentJumpCooldown=0;
+let agentCooldown=0;   /* 7s cooldown after AgentBase expires before it can spawn again */
+
+/* ---- Notifications ---- */
+let notify={text:'',color:C.brand,ttl:0,sub:''};
+
+/* ---- Milestones ---- */
+const MILESTONES=[
+  {pts:100, label:'GPU INSTANCE DEPLOYED',   color:C.gpu},
+  {pts:300, label:'VKS CLUSTER RUNNING',     color:C.vks},
+  {pts:500, label:'AGENTBASE ONLINE',        color:C.agent},
+  {pts:800, label:'AGENTBASE DEPLOYED',       color:C.agent},
+  {pts:1000,label:'GREENNODE STACK COMPLETE',color:C.brand},
+];
+let lastMilestone=0;
+
+/* ---- background dots ---- */
+const dataDots=Array.from({length:14},()=>({x:Math.random()*W,y:14+Math.random()*130,tw:Math.random()*240|0,bright:Math.random()<.25}));
+const groundSpecks=Array.from({length:60},()=>({x:Math.random()*W,y:GROUND_Y+8+Math.random()*(H-GROUND_Y-12)}));
+
+/* ============ RESET ============ */
+function reset(){
+  speed=START_SPEED;score=0;obstacles=[];powerups=[];nextSpawn=90;nextPowerupSpawn=180;
+  node.y=GROUND_Y-node.h;node.vy=0;node.onGround=true;
+  active.gpu=0;active.vks=false;active.agent=0;active.agentShield=false;
+  vksReviveAnim=0;agentJumpCooldown=0;agentCooldown=0;lastMilestone=0;
+  notify={text:'',color:C.brand,ttl:0,sub:''};
+}
+
+/* ============ INPUT ============ */
+let spaceHeld=false;
+function press(){
+  if(state==='ready'){state='play';reset();doJump();return;}
+  if(state==='dead'){if(performance.now()-deadAt>400){state='play';reset();}return;}
+  doJump();
+}
+function doJump(){if(node.onGround){node.vy=JUMP_V;node.onGround=false;sfx.jump();}}
+
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();if(!spaceHeld)press();spaceHeld=true;}
+});
+window.addEventListener('keyup',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){spaceHeld=false;if(node.vy<0)node.vy*=JUMP_CUT;}
+});
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();press();});
+canvas.addEventListener('pointerup',()=>{if(node.vy<0)node.vy*=JUMP_CUT;});
+
+/* ============ SPAWN ============ */
+const OBS_TYPES=[
+  {map:RACK_S,w:10,h:13},{map:RACK_T,w:10,h:19},{map:GPU_BOX,w:14,h:8}
+];
+function spawnObstacle(){
+  const type=OBS_TYPES[Math.random()*OBS_TYPES.length|0];
+  const dbl=type.map===RACK_S&&Math.random()<0.35;
+  const baseW=Math.round(type.w*OBS_SCALE);
+  obstacles.push({x:W+10,type,dbl,unitW:baseW,w:dbl?baseW*2:baseW,h:Math.round(type.h*OBS_SCALE)});
+  nextSpawn=78+speed*17+Math.random()*90;
+}
+
+function spawnPowerup(){
+  /* weighted rarity: GPU 20%, VKS 10%, Agent 8%, rest = nothing */
+  const roll=Math.random()*100;
+  let def=null;
+  if(roll<20)       def=POWERUP_DEFS.find(d=>d.id==='gpu');
+  else if(roll<30)  def=POWERUP_DEFS.find(d=>d.id==='vks');
+  else if(roll<38 && agentCooldown<=0)  def=POWERUP_DEFS.find(d=>d.id==='agent');
+  if(def) powerups.push({x:W+20,def,phase:Math.random()*Math.PI*2});
+  nextPowerupSpawn=260+Math.random()*180;
+}
+
+/* ============ COLLECT POWER-UP ============ */
+function collectPowerup(pu){
+  const d=pu.def;
+  sfx.powerup();
+  notify={text:d.desc,color:d.color,ttl:150,sub:d.product};
+
+  if(d.id==='gpu')  active.gpu=d.duration;
+  if(d.id==='agent'){active.agent=d.duration;agentJumpCooldown=10;}
+  if(d.id==='vks'){
+    active.vks=true;
+    notify.text='SHIELD READY - 1 HIT';
+  }
+}
+
+/* ============ UPDATE ============ */
+function update(){
+  t++;
+  if(state!=='play') return;
+
+  /* speed & score */
+  speed=Math.min(MAX_SPEED,speed+ACCEL*60);
+  const effectiveSpeed=speed;
+  const scoreMult=active.gpu>0?1.8:1;
+  score+=effectiveSpeed*0.065*scoreMult;
+
+  /* milestone check */
+  const ms=Math.floor(score);
+  for(const m of MILESTONES){
+    if(ms>=m.pts && lastMilestone<m.pts){
+      lastMilestone=m.pts;
+      sfx.milestone();
+      notify={text:m.label,color:m.color,ttl:200,sub:'MILESTONE REACHED'};
+    }
+  }
+
+  /* tick-down power-up timers */
+  if(active.gpu>0) active.gpu--;
+  if(agentCooldown>0) agentCooldown--;
+  if(active.agent>0){
+    active.agent--;
+    /* countdown: show seconds remaining at 3s, 2s, 1s marks */
+    if(active.agent===180) notify={text:'AI ENDING IN 3...',color:C.agent,ttl:55,sub:'PREPARE TO TAKE CONTROL'};
+    if(active.agent===120) notify={text:'AI ENDING IN 2...',color:C.agent,ttl:55,sub:'PREPARE TO TAKE CONTROL'};
+    if(active.agent===60)  notify={text:'AI ENDING IN 1...',color:C.agent,ttl:55,sub:'TAKE CONTROL NOW'};
+    /* when expired: grant purple shield + start 7s cooldown */
+    if(active.agent===0){
+      agentCooldown=420; /* 7s × 60fps */
+      active.agentShield=true;
+      notify={text:'AI OFFLINE + SHIELD',color:C.agent,ttl:150,sub:'AGENTBASE PROTECTION ACTIVE'};
+    }
+    /* AgentBase: simulate full jump arc to guarantee clearance */
+    agentJumpCooldown--;
+    if(node.onGround && agentJumpCooldown<=0){
+      /* simulate: if we jump NOW, where is Node at each future frame? */
+      /* obstacle also moves each frame by effectiveSpeed               */
+      /* check: does the simulated arc collide with any obstacle?       */
+
+      /* first check if there's any obstacle worth caring about ahead   */
+      const nodeLeadX = node.x + 4;
+      const hasThreat = obstacles.some(o =>
+        o.x + o.w > nodeLeadX &&
+        o.x < nodeLeadX + effectiveSpeed * 80  /* within 80 frames lookahead */
+      );
+
+      if(hasThreat){
+        /* simulate the jump arc: vy starts at JUMP_V, gravity applies each frame */
+        let simY = node.y;
+        let simVy = JUMP_V;
+        let clearance = true;
+
+        for(let f = 1; f <= 50; f++){          /* simulate 50 frames forward */
+          simVy += GRAVITY;
+          simY  += simVy;
+          if(simY > GROUND_Y - node.h){ simY = GROUND_Y - node.h; }
+
+          /* simulated node hitbox at frame f */
+          const snTop  = simY + 4;
+          const snBot  = simY + node.h - 5;
+
+          /* each obstacle is effectiveSpeed*f closer from now */
+          for(const o of obstacles){
+            const futureOX = o.x - effectiveSpeed * f;
+            const oTop     = GROUND_Y - o.h;
+            const snLeft   = nodeLeadX;
+            const snRight  = nodeLeadX + node.w - 8;
+
+            if(snLeft < futureOX + o.w - 2 &&
+               snRight > futureOX + 2 &&
+               snBot   > oTop + 2){
+              clearance = false;
+              break;
+            }
+          }
+          if(!clearance) break;
+        }
+
+        if(clearance){
+          /* jumping NOW is safe — but also check if NOT jumping causes collision */
+          /* i.e., only jump when we actually need to */
+          const mustJump = obstacles.some(o => {
+            const dist = o.x - nodeLeadX;
+            return dist > -4 && dist < effectiveSpeed * 28 && /* within ~28 frames */
+                   (GROUND_Y - o.h) < GROUND_Y;              /* obstacle has height */
+          });
+
+          if(mustJump){
+            doJump();
+            agentJumpCooldown = Math.ceil((-JUMP_V / GRAVITY) * 2) + 8;
+          }
+        } else {
+          /* jumping now would hit something — wait, do nothing this frame */
+        }
+      }
+    }
+  }
+  if(vksReviveAnim>0) vksReviveAnim--;
+  if(notify.ttl>0) notify.ttl--;
+
+  /* node physics */
+  node.vy+=GRAVITY;
+  node.y+=node.vy;
+  if(node.y>=GROUND_Y-node.h){node.y=GROUND_Y-node.h;node.vy=0;node.onGround=true;}
+
+  /* obstacle movement */
+  nextSpawn-=effectiveSpeed;
+  if(nextSpawn<=0) spawnObstacle();
+  for(const o of obstacles) o.x-=effectiveSpeed;
+  obstacles=obstacles.filter(o=>o.x+o.w>-4);
+
+  /* power-up movement */
+  nextPowerupSpawn-=effectiveSpeed;
+  if(nextPowerupSpawn<=0) spawnPowerup();
+  for(const p of powerups) p.x-=effectiveSpeed;
+  powerups=powerups.filter(p=>p.x+12>-4);
+
+  /* parallax */
+  for(const d of dataDots){d.x-=effectiveSpeed*0.08;if(d.x<-2){d.x=W+2;d.y=14+Math.random()*130;}}
+  for(const s of groundSpecks){s.x-=effectiveSpeed;if(s.x<0){s.x=W+Math.random()*8;s.y=GROUND_Y+8+Math.random()*(H-GROUND_Y-12);}}
+
+  /* collect power-ups */
+  const px=node.x+4,py=node.y+4,pw=node.w-8,ph=node.h-5;
+  for(let i=powerups.length-1;i>=0;i--){
+    const p=powerups[i];
+    const pbY=GROUND_Y-22;
+    if(px<p.x+12&&px+pw>p.x&&py<pbY+12&&py+ph>pbY){
+      collectPowerup(p);powerups.splice(i,1);
+    }
+  }
+
+  /* collision */
+  for(const o of obstacles){
+    const oy=GROUND_Y-o.h;
+    if(px<o.x+o.w-2&&px+pw>o.x+2&&py+ph>oy+2){
+      /* AgentBase purple shield — absorbs 1 hit */
+      if(active.agentShield){
+        active.agentShield=false;
+        vksReviveAnim=60;
+        notify={text:'SHIELD ABSORBED HIT',color:C.agent,ttl:180,sub:'AGENTBASE PROTECTION'};
+        sfx.revive();
+        obstacles.splice(obstacles.indexOf(o),1);
+        return;
+      }
+      /* VKS green shield: absorb the obstacle */
+      if(active.vks){
+        active.vks=false;
+        vksReviveAnim=60;
+        notify={text:'OBSTACLE ABSORBED',color:C.vks,ttl:180,sub:'VKS KUBERNETES SHIELD'};
+        sfx.revive();
+        obstacles.splice(obstacles.indexOf(o),1);
+        return;
+      }
+      /* game over */
+      state='dead';deadAt=performance.now();sfx.die();
+      hiScore=Math.max(hiScore,Math.floor(score));
+      break;
+    }
+  }
+}
+
+/* ============ DRAW HELPERS ============ */
+function pxText(s,x,y,sz,col,al){
+  ctx.font=sz+'px "Press Start 2P",monospace';
+  ctx.fillStyle=col;ctx.textAlign=al||'left';ctx.textBaseline='top';
+  ctx.fillText(s,x,y);
+}
+function panel(x,y,w,h,col){
+  col=col||C.brand;
+  ctx.fillStyle='rgba(4,9,12,0.92)';ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=col;
+  ctx.fillRect(x,y,w,2);ctx.fillRect(x,y+h-2,w,2);
+  ctx.fillRect(x,y,2,h);ctx.fillRect(x+w-2,y,2,h);
+  ctx.fillRect(x-2,y-2,4,4);ctx.fillRect(x+w-2,y+h-2,4,4);
+}
+
+/* ============ BACKGROUND ============ */
+function drawBackground(){
+  ctx.fillStyle=C.sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=C.grid;
+  for(let gy=16;gy<GROUND_Y-8;gy+=20)
+    for(let gx=10;gx<W;gx+=20)ctx.fillRect(gx,gy,1,1);
+  for(const d of dataDots){
+    const on=((t+d.tw)%200)<150;if(!on)continue;
+    ctx.fillStyle=d.bright?'#1E6B3E':'#123A24';
+    ctx.fillRect(d.x|0,d.y|0,d.bright?2:1,d.bright?2:1);
+  }
+  ctx.fillStyle='rgba(13,177,75,0.05)';ctx.fillRect(0,GROUND_Y-26,W,26);
+  ctx.fillStyle='rgba(13,177,75,0.09)';ctx.fillRect(0,GROUND_Y-12,W,12);
+  ctx.fillStyle=C.grassTop;ctx.fillRect(0,GROUND_Y,W,2);
+  ctx.fillStyle=C.grassDark;ctx.fillRect(0,GROUND_Y+2,W,2);
+  ctx.fillStyle=C.dirt;ctx.fillRect(0,GROUND_Y+4,W,H-GROUND_Y-4);
+  ctx.fillStyle=C.dirtSpeck;
+  for(const s of groundSpecks)ctx.fillRect(s.x|0,s.y|0,2,1);
+}
+
+/* ============ DRAW NODE ============ */
+function drawNode(){
+  const x=node.x|0,y=node.y|0;
+  let legs=state==='dead'?LEGS_D:!node.onGround?LEGS_J:(Math.floor(t/6)%2===0?LEGS_A:LEGS_B);
+  const body=state==='dead'?NODE_DEAD:NODE_BODY;
+
+  /* VKS revive flash */
+  if(vksReviveAnim>0&&Math.floor(vksReviveAnim/6)%2===0){
+    ctx.globalAlpha=0.4;
+  }
+
+  /* GPU score boost glow — gold tint, no speed change */
+  if(active.gpu>0){
+    ctx.fillStyle=`rgba(245,200,75,${0.13+0.07*Math.sin(t/8)})`;
+    ctx.fillRect(x-4,y-4,node.w+8,node.h+8);
+  }
+  /* Agent purple glow */
+  if(active.agent>0){
+    ctx.fillStyle=`rgba(167,139,250,${0.18+0.1*Math.sin(t/8)})`;
+    ctx.fillRect(x-4,y-4,node.w+8,node.h+8);
+  }
+  /* VKS green shield ready — pulse ring */
+  if(active.vks){
+    const pulse=Math.sin(t/10);
+    ctx.strokeStyle=`rgba(61,240,122,${0.6+0.3*pulse})`;
+    ctx.lineWidth=2;
+    ctx.strokeRect(x-5,y-5,node.w+10,node.h+10);
+    ctx.lineWidth=1;
+  }
+  /* AgentBase purple shield — outer ring, slightly larger */
+  if(active.agentShield){
+    const pulse=Math.sin(t/8);
+    ctx.strokeStyle=`rgba(167,139,250,${0.7+0.25*pulse})`;
+    ctx.lineWidth=2;
+    ctx.strokeRect(x-8,y-8,node.w+16,node.h+16);
+    ctx.lineWidth=1;
+    /* corner dots for pixel feel */
+    ctx.fillStyle=`rgba(167,139,250,${0.8+0.2*pulse})`;
+    ctx.fillRect(x-9,y-9,4,4);
+    ctx.fillRect(x+node.w+6,y-9,4,4);
+    ctx.fillRect(x-9,y+node.h+6,4,4);
+    ctx.fillRect(x+node.w+6,y+node.h+6,4,4);
+  }
+
+  drawSprite(body,x,y,{scale:NODE_SCALE});
+  drawSprite(legs,x,y+Math.round(17*NODE_SCALE),{scale:NODE_SCALE});
+  ctx.globalAlpha=1;
+
+  /* shadow */
+  ctx.fillStyle='rgba(13,177,75,0.18)';
+  const sw=node.onGround?18:12;
+  ctx.fillRect(x+((node.w-sw)/2|0),GROUND_Y+3,sw,2);
+}
+
+/* ============ DRAW OBSTACLES ============ */
+function drawObstacles(){
+  for(const o of obstacles){
+    const oy=GROUND_Y-o.h;
+    drawSprite(o.type.map,o.x|0,oy,{scale:OBS_SCALE,pal:OB_PAL,blink:true});
+    if(o.dbl)drawSprite(o.type.map,(o.x|0)+o.unitW,oy,{scale:OBS_SCALE,pal:OB_PAL,blink:true});
+  }
+}
+
+/* ============ DRAW POWER-UPS ============ */
+function drawPowerups(){
+  for(const p of powerups){
+    const bob=Math.round(Math.sin(t/18+p.phase)*3);
+    const px2=p.x|0;
+    const py2=GROUND_Y-22+bob;
+    const r=5;
+    const def=p.def;
+
+    /* glow bg */
+    ctx.fillStyle=def.color+'33';
+    ctx.fillRect(px2-r-3,py2-r-3,r*2+6,r*2+6);
+
+    /* icon */
+    def.icon(px2+r,py2+r,r);
+
+    /* label below */
+    ctx.font='4px "Press Start 2P",monospace';
+    ctx.fillStyle=def.color;
+    ctx.textAlign='center';
+    ctx.textBaseline='top';
+    ctx.fillText(def.label,px2+r,py2+r*2+3);
+  }
+}
+
+/* ============ DRAW HUD ============ */
+function drawHUD(){
+  /* score */
+  /* score — gold text when H100 GPU active, normal otherwise */
+  pxText('HI '+String(hiScore).padStart(5,'0'),W-118,10,8,C.textDim);
+  if(active.gpu>0){
+    pxText(String(Math.floor(score)).padStart(5,'0'),W-10,10,8,C.gpu,'right');
+  } else {
+    const flash=state==='play'&&Math.floor(score)%100<3&&score>50;
+    pxText(String(Math.floor(score)).padStart(5,'0'),W-10,10,8,flash?C.brand:C.text,'right');
+  }
+
+  /* active power-up bar (top-left) */
+  let barX=8;
+  const activeList=[
+    {id:'gpu',col:C.gpu,ttl:active.gpu,max:180,lbl:'H100'},
+    {id:'agent',col:C.agent,ttl:active.agent,max:240,lbl:'AI'},
+  ];
+  for(const a of activeList){
+    if(a.ttl<=0) continue;
+    const bw=32,bh=6;
+    ctx.fillStyle='#111';ctx.fillRect(barX,10,bw,bh);
+    /* flash bar red when <=3s left */
+    const barCol = (a.id==='agent' && a.ttl<=180) ? '#FF6B6B' : a.col;
+    ctx.fillStyle=barCol;
+    ctx.fillRect(barX,10,Math.round((a.ttl/a.max)*bw),bh);
+    ctx.font='4px "Press Start 2P",monospace';
+    ctx.fillStyle=barCol;ctx.textAlign='left';ctx.textBaseline='top';
+    /* show seconds countdown for agent */
+    const lbl = (a.id==='agent' && a.ttl>0) ? 'AI '+Math.ceil(a.ttl/60)+'s' : a.lbl;
+    ctx.fillText(lbl,barX,17);
+    barX+=bw+6;
+  }
+  /* VKS green shield icon */
+  if(active.vks){
+    ctx.font='4px "Press Start 2P",monospace';
+    ctx.fillStyle=C.vks;ctx.textAlign='left';ctx.textBaseline='top';
+    ctx.fillText('VKS',barX,10);
+    ctx.fillStyle=`rgba(61,240,122,${0.5+0.4*Math.sin(t/10)})`;
+    ctx.fillRect(barX,15,18,4);
+    barX+=26;
+  }
+  /* AgentBase purple shield icon */
+  if(active.agentShield){
+    ctx.font='4px "Press Start 2P",monospace';
+    ctx.fillStyle=C.agent;ctx.textAlign='left';ctx.textBaseline='top';
+    ctx.fillText('AI SHD',barX,10);
+    ctx.fillStyle=`rgba(167,139,250,${0.5+0.4*Math.sin(t/8)})`;
+    ctx.fillRect(barX,15,18,4);
+  }
+
+  /* notification banner */
+  if(notify.ttl>0){
+    const alpha=Math.min(1,notify.ttl/30);
+    ctx.globalAlpha=alpha;
+    /* sub label */
+    ctx.font='5px "Press Start 2P",monospace';
+    ctx.fillStyle=notify.color;ctx.textAlign='center';ctx.textBaseline='top';
+    ctx.fillText(notify.sub,W/2,H/2-28);
+    /* main text */
+    ctx.font='8px "Press Start 2P",monospace';
+    ctx.fillStyle=notify.color;
+    ctx.fillText(notify.text,W/2,H/2-18);
+    ctx.globalAlpha=1;
+  }
+}
+
+/* ============ DRAW OVERLAY ============ */
+function drawOverlay(){
+  if(state==='ready'){
+    panel(W/2-120,44,240,112,C.brand);
+    pxText('NODE RUNNER',W/2,58,11,C.brand,'center');
+    pxText('v2.0 — GREENNODE.AI',W/2,76,6,C.textDim,'center');
+
+    /* power-up legend */
+    const items=[
+      {col:C.gpu,   lbl:'H100  x1.8 SCORE 3s'},
+      {col:C.vks,   lbl:'VKS   ABSORB 1 HIT'},
+      {col:C.agent, lbl:'AGENT AI+SHIELD 4s'},
+    ];
+    items.forEach((it,i)=>{
+      ctx.fillStyle=it.col;ctx.fillRect(W/2-90,96+i*10,4,4);
+      ctx.font='5px "Press Start 2P",monospace';
+      ctx.fillStyle=C.text;ctx.textAlign='left';ctx.textBaseline='top';
+      ctx.fillText(it.lbl,W/2-83,96+i*10);
+    });
+
+    if(Math.floor(t/30)%2===0)
+      pxText('SPACE / TAP TO START',W/2,140,7,C.eye,'center');
+  }
+
+  if(state==='dead'){
+    panel(W/2-110,48,220,110,'#E5484D');
+    pxText('GAME OVER',W/2,62,13,'#FF6B6B','center');
+    pxText('SCORE '+Math.floor(score),W/2,90,8,C.text,'center');
+    if(Math.floor(score)>=hiScore&&hiScore>0)
+      pxText('NEW HI-SCORE!',W/2,106,7,C.brand,'center');
+
+    /* show milestone reached */
+    const best=MILESTONES.filter(m=>Math.floor(score)>=m.pts).pop();
+    if(best){
+      ctx.font='5px "Press Start 2P",monospace';
+      ctx.fillStyle=best.color;ctx.textAlign='center';ctx.textBaseline='top';
+      ctx.fillText(best.label,W/2,120);
+    }
+
+    if(Math.floor(t/30)%2===0)
+      pxText('SPACE TO RESTART',W/2,140,7,C.eye,'center');
+  }
+}
+
+/* ============ LOOP ============ */
+function loop(){
+  update();
+  drawBackground();
+  drawPowerups();
+  drawObstacles();
+  drawNode();
+  drawHUD();
+  drawOverlay();
+  requestAnimationFrame(loop);
+}
+
+document.fonts.ready.then(()=>loop());
+})();
+</script>
+</body>
+</html>
